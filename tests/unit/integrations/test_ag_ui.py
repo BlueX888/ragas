@@ -520,6 +520,61 @@ def test_text_message_chunk():
     assert messages[0].content == "Complete message"
 
 
+def test_text_message_chunk_continuation_is_merged_into_open_message():
+    """Test TEXT_MESSAGE_CHUNK continuations that repeat message_id."""
+    from ragas.integrations.ag_ui import (
+        convert_to_ragas_messages,
+        extract_response,
+    )
+
+    events = [
+        TextMessageChunkEvent(
+            message_id="msg-1", role="assistant", delta="The weather "
+        ),
+        TextMessageChunkEvent(message_id="msg-1", delta="in SF is "),
+        TextMessageChunkEvent(message_id="msg-1", delta="sunny, 72F."),
+    ]
+
+    messages = convert_to_ragas_messages(events)
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], AIMessage)
+    assert messages[0].content == "The weather in SF is sunny, 72F."
+    assert extract_response(messages) == "The weather in SF is sunny, 72F."
+
+
+def test_text_message_chunk_without_message_id_continues_open_message():
+    """Test TEXT_MESSAGE_CHUNK continuations that omit message_id."""
+    from ragas.integrations.ag_ui import convert_to_ragas_messages
+
+    events = [
+        TextMessageChunkEvent(role="assistant", delta="Hello"),
+        TextMessageChunkEvent(delta=" world"),
+    ]
+
+    messages = convert_to_ragas_messages(events)
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], AIMessage)
+    assert messages[0].content == "Hello world"
+
+
+def test_text_message_chunk_continuation_keeps_opening_role():
+    """Test that continuation chunks inherit the role of the open message."""
+    from ragas.integrations.ag_ui import convert_to_ragas_messages
+
+    events = [
+        TextMessageChunkEvent(message_id="msg-1", role="user", delta="What is "),
+        TextMessageChunkEvent(message_id="msg-1", delta="the weather?"),
+    ]
+
+    messages = convert_to_ragas_messages(events)
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], HumanMessage)
+    assert messages[0].content == "What is the weather?"
+
+
 def test_tool_call_chunk():
     """Test TOOL_CALL_CHUNK event handling."""
     from ragas.integrations.ag_ui import convert_to_ragas_messages

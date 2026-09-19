@@ -208,6 +208,7 @@ class AGUIEventCollector:
 
         # State tracking for streaming message reconstruction
         self._active_text_messages: Dict[str, Dict[str, Any]] = {}
+        self._active_text_chunk: Optional[Dict[str, Any]] = None
         self._active_tool_calls: Dict[str, Dict[str, Any]] = {}
         self._completed_tool_calls: Dict[str, ToolCall] = {}
 
@@ -521,8 +522,20 @@ class AGUIEventCollector:
         """
         # Extract message data from chunk event
         message_id = getattr(event, "message_id", None)
-        role = getattr(event, "role", "assistant")
-        content = getattr(event, "delta", "")
+        role = getattr(event, "role", None)
+        content = getattr(event, "delta", "") or ""
+
+        # A chunk that omits message_id continues the message already open;
+        # one that repeats the open message_id continues it as well
+        open_chunk = self._active_text_chunk
+        if open_chunk is not None and (
+            message_id is None or message_id == open_chunk["message_id"]
+        ):
+            self.messages[open_chunk["index"]].content += content
+            return
+
+        # The role is carried only on the chunk that opens a message
+        role = role or "assistant"
 
         # Build metadata if requested
         metadata = None
@@ -544,13 +557,20 @@ class AGUIEventCollector:
             # Check if there are completed tool calls for this message
             tool_calls = self._get_pending_tool_calls()
 
-            self.messages.append(
-                AIMessage(content=content, tool_calls=tool_calls, metadata=metadata)
+            message: Union[AIMessage, HumanMessage] = AIMessage(
+                content=content, tool_calls=tool_calls, metadata=metadata
             )
         elif role == "user":
-            self.messages.append(HumanMessage(content=content, metadata=metadata))
+            message = HumanMessage(content=content, metadata=metadata)
         else:
             logger.warning(f"Unexpected message role in chunk event: {role}")
+            return
+
+        self.messages.append(message)
+        self._active_text_chunk = {
+            "message_id": message_id,
+            "index": len(self.messages) - 1,
+        }
 
     def _handle_tool_call_chunk(self, event: Any) -> None:
         """
@@ -681,6 +701,7 @@ class AGUIEventCollector:
         """
         self.messages.clear()
         self._active_text_messages.clear()
+        self._active_text_chunk = None
         self._active_tool_calls.clear()
         self._completed_tool_calls.clear()
         self._current_run_id = None
